@@ -97,7 +97,7 @@ ipcMain.handle("list-pdfs", async () => {
   return pdfs;
 });
 
-const outputDirectory = path.join(__dirname, "qrcodes");
+const outputDirectory = path.join(__dirname, "..", "frontend", "public");
 
 async function clearFolder(folderPath) {
   try {
@@ -144,44 +144,6 @@ async function convertPdfToImages(pdfPath) {
   } catch (error) {
     console.error("❌ Error convirtiendo PDF:", error);
   }
-}
-
-async function generateQrCode(outputFileName, stringToEncode) {
-  const outputPath = path.join(outputDirectory, outputFileName);
-
-  if (!fs.existsSync(outputDirectory)) {
-    fs.mkdirSync(outputDirectory, { recursive: true });
-    console.log(`Directory '${outputDirectory}' created.`);
-  }
-
-  try {
-    await qrcode.toFile(outputPath, stringToEncode, {
-      errorCorrectionLevel: "H",
-      type: "image/png",
-      quality: 0.92,
-      margin: 4,
-      width: 300,
-      color: {
-        dark: "#000000FF",
-        light: "#FFFFFFFF",
-      },
-    });
-    console.log(`✅ QR code generated at: ${outputPath}`);
-  } catch (err) {
-    console.error(`❌ Error generating QR:`, err);
-  }
-}
-
-async function generateAllQrCodes() {
-  const promises = [];
-
-  for (let index = 0; index < 30; index++) {
-    const stringToEncode = "QR_numero_" + index;
-    const outputFileName = `${index}.png`;
-    promises.push(generateQrCode(outputFileName, stringToEncode));
-  }
-
-  await Promise.all(promises);
 }
 
 async function readQrCode(filePath) {
@@ -239,7 +201,11 @@ async function renameImg(oldPath, newName) {
   }
 }
 
-async function readAllQRCodesInFolder(folderPath, doubleFace = false) {
+async function readAllQRCodesInFolder(
+  folderPath,
+  doubleFace = false,
+  maxRetries = 3
+) {
   const foundQRCodes = [];
   const noQRCodes = [];
 
@@ -257,10 +223,30 @@ async function readAllQRCodesInFolder(folderPath, doubleFace = false) {
 
       if (!doubleFace || i % 2 === 0) {
         // PÁGINA IMPAR o modo simple
-        try {
-          const qrContent = await readQrCode(fullPath);
-          console.log(`📦 QR encontrado en '${file}':`, qrContent);
+        console.log(`🔍 Procesando archivo: ${file} con una cara`);
 
+        let qrContent = null;
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            qrContent = await readQrCode(fullPath);
+            console.log(
+              `📦 QR encontrado en intento ${attempt} para '${file}':`,
+              qrContent
+            );
+            break; // Salir del bucle si lo encuentra
+          } catch (err) {
+            console.warn(
+              `❌ Intento ${attempt} fallido para '${file}': ${err.message}`
+            );
+            if (attempt === maxRetries) {
+              console.log(
+                `⚠️ No QR encontrado en '${file}' tras ${maxRetries} intentos`
+              );
+            }
+          }
+        }
+
+        if (qrContent) {
           await renameImg(fullPath, qrContent);
           lastQrContent = qrContent;
 
@@ -269,21 +255,18 @@ async function readAllQRCodesInFolder(folderPath, doubleFace = false) {
             newFile: sanitizeFileName(qrContent) + ".png",
             qrContent: qrContent,
           });
-        } catch (err) {
-          console.log(`⚠️ No QR encontrado en '${file}', se continúa...`);
+        } else {
           noQRCodes.push(file);
         }
       } else {
         // PÁGINA PAR (solo en modo doble cara)
+        console.log(`🔍 Procesando archivo: ${file} con DOBLE cara`);
+
         if (lastQrContent) {
           const doubleFaceName = sanitizeFileName(lastQrContent) + "-b";
           await renameImg(fullPath, doubleFaceName);
 
-          noQRCodes.push({
-            originalFile: file,
-            newFile: doubleFaceName + ".png",
-            fromPreviousQR: lastQrContent,
-          });
+          foundQRCodes.push(file);
 
           console.log(
             `📄 Página doble cara renombrada a '${doubleFaceName}.png'`
@@ -304,12 +287,12 @@ async function readAllQRCodesInFolder(folderPath, doubleFace = false) {
   };
 }
 
-ipcMain.handle("scan-pdfs", async () => {
+ipcMain.handle("scan-pdf", async (event, name, doubleFace) => {
+  // <-- Add 'event' here
   console.time("⏱️ Tiempo total de ejecución");
-
-  const name = "PDF_prueba.pdf";
   const folderPath = path.join(__dirname, "saved_pdfs");
-  const pdfPath = path.join(folderPath, name);
+  const pdfPath = path.join(folderPath, name); // `name` will now correctly be the string
+
   if (!fs.existsSync(folderPath)) {
     console.error(`❌ La carpeta '${folderPath}' no existe.`);
     return;
@@ -320,11 +303,10 @@ ipcMain.handle("scan-pdfs", async () => {
     console.error(`❌ El archivo PDF '${name}' no existe.`);
     return;
   }
-  const doubleFace = false; // Cambia a true si el PDF tiene doble cara
 
-  await clearFolder(outputDirectory);
+  await clearFolder(path.join(outputDirectory, nameWithoutExtension)); // Limpiar la carpeta de salida antes de procesar
   await convertPdfToImages(pdfPath); // TODO: Cambiar 'name' por el path
-
+  console.log(`Doble cara: ${doubleFace ? "Sí" : "No"}`);
   const result = await readAllQRCodesInFolder(
     path.join(outputDirectory, nameWithoutExtension),
     doubleFace
@@ -335,6 +317,7 @@ ipcMain.handle("scan-pdfs", async () => {
   console.log("Sin QR detectado:", result.noQRCodes);
 
   console.timeEnd("⏱️ Tiempo total de ejecución");
+  return result;
 });
 
 app.whenReady().then(() => {
