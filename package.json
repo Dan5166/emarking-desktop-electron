@@ -1,0 +1,22 @@
+{
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^36.4.0",
+    "electron-builder": "^26.0.12",
+    "wait-on": "^8.0.3"
+  },
+  "scripts": {
+    "dev": "concurrently \"npm run dev --prefix frontend\" \"npm run electron\"",
+    "electron": "wait-on http://localhost:5173 && electron electron/main.js",
+    "build": "npm run build --prefix frontend"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.1.10",
+    "@zxing/library": "^0.21.3",
+    "jimp": "^1.6.0",
+    "pdf-poppler": "^0.2.1",
+    "qrcode": "^1.5.4",
+    "tailwindcss": "^4.1.10"
+  }
+}
