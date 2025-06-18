@@ -7,4 +7,8 @@ contextBridge.exposeInMainWorld("electron", {
   scanPdf: (selectedPdfPath, doubleFace) =>
     ipcRenderer.invoke("scan-pdf", selectedPdfPath, doubleFace),
   listImagesToScan: (filePath) => ipcRenderer.invoke("scan-pdfs", filePath),
+  zipFolder: (
+    folderName,
+    pdfId // Nuevo método
+  ) => ipcRenderer.invoke("zip-folder", folderName, pdfId),
 });
