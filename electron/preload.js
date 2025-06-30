@@ -10,5 +10,7 @@ contextBridge.exposeInMainWorld("electron", {
   zipFolder: (
     folderName,
     pdfId // Nuevo método
-  ) => ipcRenderer.invoke("zip-folder", folderName, pdfId),
+  ) => ipcRenderer.invoke("zip-folder", folderName, pdfId),adjustImage: ({ imagePath, brightness, contrast }) =>
+  ipcRenderer.invoke("adjust-image", { imagePath, brightness, contrast }),
+  consoleLogHandler: (filePath) => ipcRenderer.invoke("console-log-handler", filePath),
 });

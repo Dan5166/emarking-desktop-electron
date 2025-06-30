@@ -51,7 +51,6 @@ async function convertPdfToImages(pdfPath) {
 }
 
 async function readQrCode(filePath) {
-  const max_attempts = 3;
   const image = await Jimp.read(filePath);
   const width = image.bitmap.width;
   const height = image.bitmap.height;
@@ -77,35 +76,22 @@ async function readQrCode(filePath) {
   reader.setHints(hints);
 
   const result = reader.decode(bitmap);
-  console.log("RESULTADO 111111111111111: ", result.getText());
   return result.getText();
 }
 
 async function readQrCodeFromHalvedImage(filePath, tempFolderPath) {
-  console.log(
-    "***************************************************************************"
-  );
-  console.log(
-    "---------------------------------------------------------------------------"
-  );
-  console.log(path.basename(filePath, path.extname(filePath)));
-  console.log(
-    "---------------------------------------------------------------------------"
-  );
-  console.log(
-    "***************************************************************************"
-  );
-  console.log(
-    "✂ Entrando a leer QR code desde imágenes a la mitad: ",
-    filePath
-  );
+  console.log("✂ Entrando a leer QR code desde imágenes a la mitad");
 
   const image = await Jimp.read(filePath);
   console.log("✅ Imagen leída correctamente");
 
   const width = image.bitmap.width;
   const height = image.bitmap.height;
-  const halfHeight = Math.floor(height / 5);
+  const halfHeight = Math.floor(height / 2);
+
+  console.log(
+    `📏 Dimensiones: width=${width}, height=${height}, halfHeight=${halfHeight}`
+  );
 
   if (
     typeof width !== "number" ||
@@ -118,30 +104,39 @@ async function readQrCodeFromHalvedImage(filePath, tempFolderPath) {
     throw new Error("Error al recortar imagen: dimensiones inválidas");
   }
 
-  const topClone = image.clone();
+  let topHalf, bottomHalf;
   try {
+    console.log("Intentando cropear desde");
+    console.log("WIDTH:", width);
+    console.log("halfHeight:", halfHeight);
+    console.log("height:", height);
+    console.log("height - halfHeight:", height - halfHeight);
 
-    // const bottomClone = image.clone();
+    const topClone = image.clone();
+    const bottomClone = image.clone();
 
     console.log("✅ Se pudo clonar la imagen");
 
-    const x = 0;
-    const y = 0;
-    const w = width;
-    const h = halfHeight;
+    const x = 150;
+    const y = 100;
+    const w = 200;
+    const h = 200;
 
     if ([x, y, w, h].some((n) => typeof n !== "number" || isNaN(n))) {
       throw new Error("❌ Parámetros de crop inválidos");
     }
 
-    topClone.crop({ x: x, y: y, w: w, h: h }); // ❌
-    // const cropPath = path.join(process.cwd(), "frontend", "public", "crop.jpg");
+    image.crop({ x: 150, y: 100, w: 200, h: 200 }); // ❌
+    const cropPath = path.join(process.cwd(), "frontend", "public", "crop.jpg");
+    await image.write(cropPath);
 
     console.log("✅ Se pudo recortar la imagen");
 
-    // if (!(topHalf instanceof Jimp) || !(bottomHalf instanceof Jimp)) {
-    //   throw new Error("El crop no devolvió una instancia válida de Jimp");
-    // }
+    if (!(topHalf instanceof Jimp) || !(bottomHalf instanceof Jimp)) {
+      throw new Error("El crop no devolvió una instancia válida de Jimp");
+    }
+
+    console.log("✅ Recortes realizados con éxito");
   } catch (err) {
     console.error("❌ Error al recortar imagen:", err); // sin stringify
     throw new Error("Error al recortar imagen: " + err.message);
@@ -156,8 +151,8 @@ async function readQrCodeFromHalvedImage(filePath, tempFolderPath) {
   const bottomPath = path.join(tempFolderPath, `${fileName}_bottom.png`);
 
   try {
-    await topClone.write(topPath);
-    // await bottomHalf.write(bottomPath);
+    await topHalf.writeAsync(topPath);
+    await bottomHalf.writeAsync(bottomPath);
     console.log("📝 Archivos top y bottom guardados exitosamente");
   } catch (err) {
     console.error("❌ Error al guardar las imágenes recortadas:", err.message);
@@ -183,30 +178,17 @@ function sanitizeFileName(name) {
   return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, "").replace(/\s+/g, "_");
 }
 
-async function renameImg(oldPath, newName, allPages) {
+async function renameImg(oldPath, newName) {
   const dir = path.dirname(oldPath);
-  const oldFileName = path.basename(oldPath); // e.g. page-86
-  const newFileName = sanitizeFileName(newName);                     // e.g. page-renombrada
-  const newPath = path.join(dir, newFileName + ".png");
-
-  // Reemplazar nombre en el array
-  const index = allPages.indexOf(oldFileName);
-  if (index != -1) {
-    console.log(`💡💡💡💡 Renombrando en array ${allPages[index]} por ${newFileName}`);
-    allPages[index] = path.join(newFileName + ".png");;
-  }
-
+  const newPath = path.join(dir, sanitizeFileName(newName) + ".png");
   await fs.promises.rename(oldPath, newPath);
-  return allPages;
 }
-
 
 async function readAllQRCodesInFolder(
   folderPath,
   doubleFace = false,
   maxRetries = 3
 ) {
-  let allPages = [];
   const foundQRCodes = [];
   const noQRCodes = [];
   const tempHalvesFolder = path.join(folderPath, "halved_images_temp");
@@ -241,9 +223,9 @@ async function readAllQRCodesInFolder(
           );
         }
       }
+
       if (qrContent) {
-        allPages.push(file);
-        allPages = await renameImg(fullPath, qrContent, allPages);
+        await renameImg(fullPath, qrContent);
         lastQrContent = qrContent;
         foundQRCodes.push({
           originalFile: file,
@@ -251,25 +233,22 @@ async function readAllQRCodesInFolder(
           qrContent,
         });
       } else {
-        allPages.push(file);
         noQRCodes.push(file);
       }
     } else {
       if (lastQrContent) {
-        allPages.push(file);
         const name = sanitizeFileName(lastQrContent) + "-b";
-        allPages = await renameImg(fullPath, name, allPages);
+        await renameImg(fullPath, name);
       } else {
         console.warn(
           `No hay QR previo para renombrar '${file}' (página doble cara)`
         );
         noQRCodes.push(file);
-        allPages.push(file);
       }
     }
   }
 
-  return { foundQRCodes, noQRCodes, allPages };
+  return { foundQRCodes, noQRCodes };
 }
 
 parentPort.on("message", async ({ pdfName, doubleFace, savedPdfsPath }) => {
@@ -289,10 +268,6 @@ parentPort.on("message", async ({ pdfName, doubleFace, savedPdfsPath }) => {
       path.join(outputDirectory, nameWithoutExt),
       doubleFace
     );
-
-    if(result) {
-      console.log("YAAAAAAAAAAAAAAAAAAAAAAA: ", result.allPages);
-    }
 
     console.timeEnd(`⏱️ Tiempo total de ejecución para ${pdfName}`);
     parentPort.postMessage({ status: "success", pdfName, result });

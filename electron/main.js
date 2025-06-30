@@ -4,9 +4,20 @@ import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
 import { Worker } from "worker_threads"; // Importar Worker
+import { Jimp } from "jimp";
+import {
+  MultiFormatReader,
+  RGBLuminanceSource,
+  BinaryBitmap,
+  HybridBinarizer,
+  DecodeHintType,
+  BarcodeFormat,
+} from "@zxing/library";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const outputDirectory = path.join(process.cwd(), "frontend", "public");
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -193,6 +204,118 @@ ipcMain.handle("zip-folder", (event, pdfName, pdfId) => {
     // IMPORTANTE: Esta línea es NECESARIA porque tu worker está escuchando 'parentPort.on("message")'
     worker.postMessage({ folderToZip, outputZipPath, pdfId });
   });
+});
+
+function percentToJimpValue(percent) {
+  return (percent - 100) / 100;
+}
+
+async function readQrCode(filePath) {
+  const image = await Jimp.read(filePath);
+  const width = image.bitmap.width;
+  const height = image.bitmap.height;
+  const luminances = new Uint8ClampedArray(width * height);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 4;
+      const r = image.bitmap.data[idx];
+      const g = image.bitmap.data[idx + 1];
+      const b = image.bitmap.data[idx + 2];
+      luminances[y * width + x] = (r + g + b) / 3;
+    }
+  }
+
+  const source = new RGBLuminanceSource(luminances, width, height);
+  const bitmap = new BinaryBitmap(new HybridBinarizer(source));
+
+  const hints = new Map();
+  hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]);
+
+  const reader = new MultiFormatReader();
+  reader.setHints(hints);
+
+  const result = reader.decode(bitmap);
+  return result.getText();
+}
+
+function sanitizeFileName(name) {
+  return name.replace(/[<>:"/\\|?*\x00-\x1F]/g, "").replace(/\s+/g, "_");
+}
+
+async function renameImg(oldPath, newName) {
+  const dir = path.dirname(oldPath);
+  const newFileName = sanitizeFileName(newName);
+  const newPath = path.join(dir, newFileName + ".png");
+
+  await fs.promises.rename(oldPath, newPath);
+  return newPath; // Devolver la nueva ruta para que el frontend la tenga
+}
+
+ipcMain.handle(
+  "adjust-image",
+  async (event, { imagePath, brightness, contrast }) => {
+    const inputPath = path.join(outputDirectory, imagePath);
+    try {
+      const image = await Jimp.read(inputPath);
+
+      const brightnessValue = percentToJimpValue(brightness);
+      const contrastValue = percentToJimpValue(contrast);
+
+      image.brightness(brightnessValue); // -1 a 1
+      image.contrast(contrastValue); // -1 a 1
+
+      // const outputPath = inputPath.replace(/\.png$/, "_adjusted.png");
+      // await image.write(outputPath);
+
+      const width = image.bitmap.width;
+      const height = image.bitmap.height;
+      const luminances = new Uint8ClampedArray(width * height);
+
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const idx = (y * width + x) * 4;
+          const r = image.bitmap.data[idx];
+          const g = image.bitmap.data[idx + 1];
+          const b = image.bitmap.data[idx + 2];
+          luminances[y * width + x] = (r + g + b) / 3;
+        }
+      }
+
+      const source = new RGBLuminanceSource(luminances, width, height);
+      const bitmap = new BinaryBitmap(new HybridBinarizer(source));
+
+      const hints = new Map();
+      hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]);
+
+      const reader = new MultiFormatReader();
+      reader.setHints(hints);
+
+      const result = reader.decode(bitmap);
+      if(result){
+        console.log("🗂️ RESULTADO: ");
+        console.log(result.getText());
+        console.log(`Cambiando nombre desde:  ${inputPath} a ${result.getText()}`);
+        renameImg(inputPath, result.getText());
+      } else {
+        console.log("No resultado");
+      }
+
+      console.log("Llega al final");
+      
+      return {
+        success: true,
+        path: outputPath,
+        qrText: result.getText(),
+      };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+);
+
+ipcMain.handle("console-log-handler", async (event, object) => {
+  console.log(object.message);
 });
 
 app.whenReady().then(() => {

@@ -8,6 +8,42 @@ export default function EscanerPDF() {
   const [zipping, setZipping] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
 
+  const [brightness, setBrightness] = useState(100); // valor en porcentaje
+  const [contrast, setContrast] = useState(100); // valor en porcentaje
+
+  const ajustarImagen = async () => {
+  const response = await window.electron.adjustImage({
+    imagePath: `./${selectedPdf?.name.replace(/\.pdf$/i, "")}/${previewImage}`,
+    brightness,
+    contrast,
+  });
+
+  console.log("⚙️ Response completo:", response);
+
+  if (response.success) {
+    setPreviewImage(response.path); // actualiza la imagen con nombre nuevo
+
+    if (response.qrText) {
+      console.log("✅ Encontró un QR y lo modificó: ", response);
+      setPdfList((prevList) =>
+        prevList.map((pdf) => {
+          if (pdf.id === selectedPdfId) {
+            return {
+              ...pdf,
+              noQRCodes: pdf.noQRCodes.filter((img) => img !== previewImage),
+            };
+          }
+          return pdf;
+        })
+      );
+    } else {
+      console.log("⚠️ No encontró QR en la imagen ajustada.");
+    }
+  } else {
+    console.log("❌ Error al modificar la imagen:", response.error);
+  }
+};
+
   const handleFileUpload = async () => {
     const filePath = await window.electron.openFileDialog();
     if (!filePath) return;
@@ -20,6 +56,7 @@ export default function EscanerPDF() {
       status: "pending",
       foundQRCodes: [],
       noQRCodes: [],
+      allPages: [],
       doubleFace: false,
     };
 
@@ -67,6 +104,7 @@ export default function EscanerPDF() {
     let finalStatus = "error"; // Default to error
     let foundQRCodes = [];
     let noQRCodes = [];
+    let allPages = [];
     let errorMessage = "";
     let duration = "0.00";
 
@@ -80,6 +118,7 @@ export default function EscanerPDF() {
       finalStatus = "scanned";
       foundQRCodes = result.foundQRCodes || [];
       noQRCodes = result.noQRCodes || [];
+      allPages = result.allPages || [];
       duration = ((endTime - startTime) / 1000).toFixed(2);
 
       // This part is crucial for single scan updates
@@ -91,6 +130,7 @@ export default function EscanerPDF() {
                 status: finalStatus,
                 foundQRCodes: foundQRCodes,
                 noQRCodes: noQRCodes,
+                allPages: allPages,
                 duration: duration,
                 error: undefined, // Clear any previous error
               }
@@ -104,6 +144,7 @@ export default function EscanerPDF() {
         status: finalStatus,
         foundQRCodes: foundQRCodes,
         noQRCodes: noQRCodes,
+        allPages: allPages,
         duration: duration,
       };
     } catch (err) {
@@ -119,6 +160,7 @@ export default function EscanerPDF() {
                 status: "error",
                 error: errorMessage,
                 foundQRCodes: [], // Clear previous results on error
+                allPages: [],
                 noQRCodes: [],
                 duration: undefined,
               }
@@ -255,6 +297,26 @@ export default function EscanerPDF() {
     if (!selectedPdf) return;
     console.log("PDF seleccionado:", selectedPdf);
   }, [selectedPdf]);
+
+  const callConsoleLogHandler = async (object) => {
+    try {
+      await window.electron.consoleLogHandler(object);
+    } catch (error) {
+      console.error(`Error al enviar el mensaje al handler`);
+    } finally {
+      console.log("Mensaje enviado");
+    }
+  };
+
+  useEffect(() => {
+    console.log(brightness);
+    console.log(contrast);
+    ajustarImagen();
+  }, [brightness, contrast]);
+
+  useEffect(() => {
+    console.log(pdfList);
+  }, [pdfList]);
 
   return (
     <div className="h-screen flex flex-col bg-white p-3">
@@ -462,25 +524,27 @@ export default function EscanerPDF() {
                     <h2 className="text-lg font-semibold mb-4">
                       Imágenes sin QR
                     </h2>
-                    {selectedPdf.noQRCodes.length === 0 ? (
-                      <p className="text-sm text-gray-500">
-                        Todas las páginas tienen QR.
-                      </p>
-                    ) : (
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        {selectedPdf.noQRCodes.map((imgPath, i) => (
-                          <img
-                            key={i}
-                            src={`./${selectedPdf.name.replace(
-                              /\.pdf$/i,
-                              ""
-                            )}/${imgPath}`}
-                            className="rounded shadow border border-gray-300 cursor-pointer hover:opacity-80"
-                            onClick={() => setPreviewImage(imgPath)}
-                          />
-                        ))}
-                      </div>
-                    )}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      {selectedPdf.allPages.map((imgPath, i) => {
+                        const isNoQR = selectedPdf.noQRCodes.includes(imgPath);
+
+                        return (
+                          <div key={i}>
+                            <h3 className="text-sm mb-1">Página {i + 1}</h3>
+                            <img
+                              src={`./${selectedPdf.name.replace(
+                                /\.pdf$/i,
+                                ""
+                              )}/${imgPath}`}
+                              className={`rounded shadow border-4 cursor-pointer hover:opacity-80 transition ${
+                                isNoQR ? "border-red-500" : "border-gray-300"
+                              }`}
+                              onClick={() => setPreviewImage(imgPath)}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
                   </>
                 ) : selectedPdf.status === "pending" ? (
                   <p className="text-sm text-gray-500">
@@ -501,9 +565,13 @@ export default function EscanerPDF() {
 
       {previewImage && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
-          <div className="relative bg-white rounded-lg shadow-lg p-4 max-w-3xl">
+          <div className="relative bg-gray-200 rounded-lg shadow-lg p-4 max-w-3xl w-full">
             <button
-              onClick={() => setPreviewImage(null)}
+              onClick={() => {
+                setPreviewImage(null);
+                setBrightness(100);
+                setContrast(100);
+              }}
               className="absolute top-2 right-2 text-gray-600 hover:text-red-500"
             >
               <i className="fa-solid fa-xmark text-2xl" />
@@ -511,14 +579,57 @@ export default function EscanerPDF() {
             <h1 className="text-xl mb-4">
               Vista previa de la imagen: {previewImage}
             </h1>
+
             <img
               src={`./${selectedPdf?.name.replace(
                 /\.pdf$/i,
                 ""
               )}/${previewImage}`}
               alt="Vista previa"
-              className="max-w-full max-h-[80vh] rounded"
+              className="max-w-full max-h-[70vh] rounded mx-auto"
+              style={{
+                filter: `brightness(${brightness}%) contrast(${contrast}%)`,
+                transition: "filter 0.2s ease",
+              }}
             />
+
+            <div className="mt-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Brillo: {brightness}%
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="200"
+                  value={brightness}
+                  onChange={(e) => setBrightness(Number(e.target.value))}
+                  className="w-full"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Contraste: {contrast}%
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="200"
+                  value={contrast}
+                  onChange={(e) => setContrast(Number(e.target.value))}
+                  className="w-full"
+                />
+              </div>
+              <button
+                onClick={() => {
+                  console.log("FURRYLYNY SERVICES");
+                }}
+                className="mt-4 p-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                Aplicar cambios
+              </button>
+            </div>
           </div>
         </div>
       )}
