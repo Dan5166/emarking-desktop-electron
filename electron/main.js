@@ -32,7 +32,7 @@ function createWindow() {
   });
 
   win.setMenuBarVisibility(true);
-  win.loadURL("http://localhost:5173");
+  win.loadURL("http://localhost:5174");
 }
 
 ipcMain.handle("dialog:openFile", async () => {
@@ -145,7 +145,6 @@ ipcMain.handle("scan-pdf", (event, pdfName, doubleFace) => {
 ipcMain.handle("zip-folder", (event, pdfName, pdfId) => {
   console.log("Se manda a zipear: ", pdfName);
   return new Promise((resolve, reject) => {
-    // Es preferible que tu 'outputDirectory' sea más consistente con Electron.
     const fileToZip = path.join(process.cwd(), "frontend", "public", pdfName);
 
     const outputDirectory = path.join(
@@ -156,26 +155,23 @@ ipcMain.handle("zip-folder", (event, pdfName, pdfId) => {
       pdfName
     );
 
-    // PROD - const outputZipDir = path.join(app.getAppPath(), "zipped_pdfs");
+    const outputZipDir = path.join(app.getAppPath(), "zipped_pdfs");
     const outputZipPath = path.join(outputZipDir, `${pdfName}.zip`);
 
     fs.mkdirSync(outputZipDir, { recursive: true });
 
     const workerPath = path.join(__dirname, "zipWorker.js");
-
-    const worker = new Worker(workerPath); // No pasar workerData aquí si el worker espera un postMessage
+    const worker = new Worker(workerPath);
 
     console.log("Worker de zip creado para:", pdfName);
 
     worker.on("message", (message) => {
-      // El worker envió un mensaje (éxito o error)
       console.log("MENSAJE DEL WORKER (zip-folder): ", message);
       if (message.status === "success") {
-        resolve(message.result);
+        resolve(message.outputPath); // Aquí usas `message.outputPath`, no `message.result`
       } else {
         reject(new Error(message.error));
       }
-      // CRUCIAL: Terminar el worker después de recibir un mensaje (éxito o error)
       worker.terminate();
     });
 
@@ -186,7 +182,6 @@ ipcMain.handle("zip-folder", (event, pdfName, pdfId) => {
           `Error en el proceso de zipping para ${pdfName}: ${err.message}`
         )
       );
-      // CRUCIAL: Terminar el worker en caso de error
       worker.terminate();
     });
 
@@ -201,8 +196,12 @@ ipcMain.handle("zip-folder", (event, pdfName, pdfId) => {
       );
     });
 
-    // IMPORTANTE: Esta línea es NECESARIA porque tu worker está escuchando 'parentPort.on("message")'
-    worker.postMessage({ folderToZip, outputZipPath, pdfId });
+    // CORREGIDO
+    worker.postMessage({
+      folderToZip: fileToZip,
+      outputZipPath,
+      pdfId,
+    });
   });
 });
 
@@ -292,17 +291,19 @@ ipcMain.handle(
       reader.setHints(hints);
 
       const result = reader.decode(bitmap);
-      if(result){
+      if (result) {
         console.log("🗂️ RESULTADO: ");
         console.log(result.getText());
-        console.log(`Cambiando nombre desde:  ${inputPath} a ${result.getText()}`);
+        console.log(
+          `Cambiando nombre desde:  ${inputPath} a ${result.getText()}`
+        );
         renameImg(inputPath, result.getText());
       } else {
         console.log("No resultado");
       }
 
       console.log("Llega al final");
-      
+
       return {
         success: true,
         path: outputPath,

@@ -52,33 +52,50 @@ async function convertPdfToImages(pdfPath) {
 
 async function readQrCode(filePath) {
   const max_attempts = 3;
-  const image = await Jimp.read(filePath);
-  const width = image.bitmap.width;
-  const height = image.bitmap.height;
-  const luminances = new Uint8ClampedArray(width * height);
 
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const idx = (y * width + x) * 4;
-      const r = image.bitmap.data[idx];
-      const g = image.bitmap.data[idx + 1];
-      const b = image.bitmap.data[idx + 2];
-      luminances[y * width + x] = (r + g + b) / 3;
+  for (let attempt = 0; attempt < max_attempts; attempt++) {
+    try {
+      const image = await Jimp.read(filePath);
+
+      // Ajuste de brillo progresivo: de 0 (sin cambio) hasta 0.3
+      const brightnessValue = attempt * 0.15; // 0.0, 0.15, 0.3
+      const contrastValue = attempt * 0.1; // Opcional: 0.0, 0.1, 0.2
+
+      image.brightness(brightnessValue); // Rango: -1 a +1
+      image.contrast(contrastValue); // Rango: -1 a +1
+
+      const width = image.bitmap.width;
+      const height = image.bitmap.height;
+      const luminances = new Uint8ClampedArray(width * height);
+
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const idx = (y * width + x) * 4;
+          const r = image.bitmap.data[idx];
+          const g = image.bitmap.data[idx + 1];
+          const b = image.bitmap.data[idx + 2];
+          luminances[y * width + x] = (r + g + b) / 3;
+        }
+      }
+
+      const source = new RGBLuminanceSource(luminances, width, height);
+      const bitmap = new BinaryBitmap(new HybridBinarizer(source));
+
+      const hints = new Map();
+      hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]);
+
+      const reader = new MultiFormatReader();
+      reader.setHints(hints);
+
+      const result = reader.decode(bitmap);
+      console.log(`Intento ${attempt + 1}: ${result.getText()}`);
+      return result.getText();
+    } catch (err) {
+      console.warn(`Intento ${attempt + 1} fallido:`, err.message);
+      if (attempt === max_attempts - 1)
+        throw new Error("No se pudo leer el QR después de varios intentos");
     }
   }
-
-  const source = new RGBLuminanceSource(luminances, width, height);
-  const bitmap = new BinaryBitmap(new HybridBinarizer(source));
-
-  const hints = new Map();
-  hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]);
-
-  const reader = new MultiFormatReader();
-  reader.setHints(hints);
-
-  const result = reader.decode(bitmap);
-  console.log("RESULTADO 111111111111111: ", result.getText());
-  return result.getText();
 }
 
 async function readQrCodeFromHalvedImage(filePath, tempFolderPath) {
@@ -120,7 +137,6 @@ async function readQrCodeFromHalvedImage(filePath, tempFolderPath) {
 
   const topClone = image.clone();
   try {
-
     // const bottomClone = image.clone();
 
     console.log("✅ Se pudo clonar la imagen");
@@ -186,20 +202,21 @@ function sanitizeFileName(name) {
 async function renameImg(oldPath, newName, allPages) {
   const dir = path.dirname(oldPath);
   const oldFileName = path.basename(oldPath); // e.g. page-86
-  const newFileName = sanitizeFileName(newName);                     // e.g. page-renombrada
+  const newFileName = sanitizeFileName(newName); // e.g. page-renombrada
   const newPath = path.join(dir, newFileName + ".png");
 
   // Reemplazar nombre en el array
   const index = allPages.indexOf(oldFileName);
   if (index != -1) {
-    console.log(`💡💡💡💡 Renombrando en array ${allPages[index]} por ${newFileName}`);
-    allPages[index] = path.join(newFileName + ".png");;
+    console.log(
+      `💡💡💡💡 Renombrando en array ${allPages[index]} por ${newFileName}`
+    );
+    allPages[index] = path.join(newFileName + ".png");
   }
 
   await fs.promises.rename(oldPath, newPath);
   return allPages;
 }
-
 
 async function readAllQRCodesInFolder(
   folderPath,
@@ -290,7 +307,7 @@ parentPort.on("message", async ({ pdfName, doubleFace, savedPdfsPath }) => {
       doubleFace
     );
 
-    if(result) {
+    if (result) {
       console.log("YAAAAAAAAAAAAAAAAAAAAAAA: ", result.allPages);
     }
 
