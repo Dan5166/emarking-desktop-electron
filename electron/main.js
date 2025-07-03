@@ -32,7 +32,7 @@ function createWindow() {
   });
 
   win.setMenuBarVisibility(true);
-  win.loadURL("http://localhost:5174");
+  win.loadURL("http://localhost:5173");
 }
 
 ipcMain.handle("dialog:openFile", async () => {
@@ -83,6 +83,63 @@ ipcMain.handle("list-pdfs", async () => {
       status: "ok",
     }));
   return pdfs;
+});
+
+ipcMain.handle("init-pdf", (event, pdfName) => {
+  console.log("Se INICIALIZA el PDF: ", pdfName);
+  return new Promise((resolve, reject) => {
+    // Ruta al directorio donde se guardan los PDFs
+    // Usa app.getAppPath() o app.getPath('userData') para rutas más robustas en Electron.
+    const savedPdfsPath = path.join(__dirname, "saved_pdfs"); // O app.getAppPath() para producción
+    // Ruta al worker script
+    const workerPath = path.join(__dirname, "pdfToImageWorker.js");
+
+    // Crear un nuevo worker thread
+    const worker = new Worker(workerPath); // No pasar workerData aquí si el worker espera un postMessage
+
+    console.log("Creado nuevo Worker para escaneo de:", pdfName);
+
+    worker.on("message", (message) => {
+      // El worker envió un mensaje (éxito o error)
+      console.log("MENSAJE DEL WORKER (pdfToImageWorker): ", message);
+      if (message.status === "success") {
+        resolve(message); // ✅ ahora el frontend recibirá { status: 'success', pdfName: ... }
+      } else {
+        reject(new Error(message.error));
+      }
+      // CRUCIAL: Terminar el worker después de recibir un mensaje (éxito o error)
+      worker.terminate();
+    });
+
+    worker.on("error", (err) => {
+      // Ocurrió un error no manejado en el worker
+      console.error(`Worker error para separación de ${pdfName}:`, err);
+      reject(
+        new Error(
+          `Error en el proceso de separación para ${pdfName}: ${err.message}`
+        )
+      );
+      // CRUCIAL: Terminar el worker en caso de error
+      worker.terminate();
+    });
+
+    worker.on("exit", (code) => {
+      if (code !== 0) {
+        console.error(
+          `Worker para escaneo de ${pdfName} terminó con código de salida ${code}`
+        );
+        // Considerar si necesitas rechazar la promesa aquí si el worker termina
+        // con un código de error *antes* de enviar un mensaje de error.
+        // Si el `worker.on('error')` ya lo maneja, esto es un fallback.
+      }
+      console.log(
+        `Worker para escaneo de ${pdfName} salió con código: ${code}`
+      );
+    });
+
+    // IMPORTANTE: Esta línea es NECESARIA porque tu worker está escuchando 'parentPort.on("message")'
+    worker.postMessage({ pdfName, savedPdfsPath });
+  });
 });
 
 ipcMain.handle("scan-pdf", (event, pdfName, doubleFace) => {

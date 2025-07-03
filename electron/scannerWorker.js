@@ -33,6 +33,7 @@ async function clearFolder(folderPath) {
 }
 
 async function convertPdfToImages(pdfPath) {
+  console.time("convertir-pdf-a-imagenes");
   const pdfFileName = path.basename(pdfPath, path.extname(pdfPath));
   const outputFolder = path.join(outputDirectory, pdfFileName);
 
@@ -48,21 +49,27 @@ async function convertPdfToImages(pdfPath) {
   };
 
   await pdf.convert(pdfPath, options);
+  console.timeEnd("convertir-pdf-a-imagenes");
 }
 
 async function readQrCode(filePath) {
+  console.time("inicio-busqueda-imagen");
   const max_attempts = 3;
 
   for (let attempt = 0; attempt < max_attempts; attempt++) {
     try {
+      console.time("buscar-imagen-JIMP");
       const image = await Jimp.read(filePath);
+      console.timeEnd("buscar-imagen-JIMP");
 
-      // Ajuste de brillo progresivo: de 0 (sin cambio) hasta 0.3
-      const brightnessValue = attempt * 0.15; // 0.0, 0.15, 0.3
-      const contrastValue = attempt * 0.1; // Opcional: 0.0, 0.1, 0.2
-
-      image.brightness(brightnessValue); // Rango: -1 a +1
-      image.contrast(contrastValue); // Rango: -1 a +1
+      if (attempt !== 0) {
+        console.time("ajuste-imagen");
+        const brightnessValue = attempt * 0.15;
+        const contrastValue = attempt * 0.1;
+        image.brightness(brightnessValue);
+        image.contrast(contrastValue);
+        console.timeEnd("ajuste-imagen");
+      }
 
       const width = image.bitmap.width;
       const height = image.bitmap.height;
@@ -89,41 +96,32 @@ async function readQrCode(filePath) {
 
       const result = reader.decode(bitmap);
       console.log(`Intento ${attempt + 1}: ${result.getText()}`);
+
+      // ✅ Cerramos el temporizador justo antes de retornar
+      console.timeEnd("inicio-busqueda-imagen");
+
       return result.getText();
     } catch (err) {
       console.warn(`Intento ${attempt + 1} fallido:`, err.message);
-      if (attempt === max_attempts - 1)
+      if (attempt === max_attempts - 1) {
+        console.timeEnd("inicio-busqueda-imagen"); // ✅ Cerramos también en el último intento fallido
         throw new Error("No se pudo leer el QR después de varios intentos");
+      }
     }
   }
+
+  // En teoría este punto no se alcanza nunca por el return o el throw
+  return null;
 }
 
 async function readQrCodeFromHalvedImage(filePath, tempFolderPath) {
-  console.log(
-    "***************************************************************************"
-  );
-  console.log(
-    "---------------------------------------------------------------------------"
-  );
-  console.log(path.basename(filePath, path.extname(filePath)));
-  console.log(
-    "---------------------------------------------------------------------------"
-  );
-  console.log(
-    "***************************************************************************"
-  );
-  console.log(
-    "✂ Entrando a leer QR code desde imágenes a la mitad: ",
-    filePath
-  );
-
+  console.time("leer-codigo-qr-halved-imagen");
   const image = await Jimp.read(filePath);
   console.log("✅ Imagen leída correctamente");
 
   const width = image.bitmap.width;
   const height = image.bitmap.height;
   const halfHeight = Math.floor(height / 5);
-
   if (
     typeof width !== "number" ||
     typeof height !== "number" ||
@@ -135,63 +133,72 @@ async function readQrCodeFromHalvedImage(filePath, tempFolderPath) {
     throw new Error("Error al recortar imagen: dimensiones inválidas");
   }
 
-  const topClone = image.clone();
-  try {
-    // const bottomClone = image.clone();
+  const text = await readQrCode(filePath);
+  if (text) {
+    console.log("✅ QR encontrado en la imagen completa");
+    console.timeEnd("leer-codigo-qr-halved-imagen");
+    return text;
+  } else {
+    console.log(
+      "🔍 No se encontró QR en la imagen completa, procediendo a recortar"
+    );
+    const topClone = image.clone();
+    try {
+      const x = 0;
+      const y = 0;
+      const w = width;
+      const h = halfHeight;
 
-    console.log("✅ Se pudo clonar la imagen");
-
-    const x = 0;
-    const y = 0;
-    const w = width;
-    const h = halfHeight;
-
-    if ([x, y, w, h].some((n) => typeof n !== "number" || isNaN(n))) {
-      throw new Error("❌ Parámetros de crop inválidos");
+      if ([x, y, w, h].some((n) => typeof n !== "number" || isNaN(n))) {
+        throw new Error("❌ Parámetros de crop inválidos");
+      }
+      topClone.crop({ x: x, y: y, w: w, h: h });
+    } catch (err) {
+      console.timeEnd("leer-codigo-qr-halved-imagen");
+      console.error("❌ Error al recortar imagen:", err);
+      throw new Error("Error al recortar imagen: " + err.message);
     }
 
-    topClone.crop({ x: x, y: y, w: w, h: h }); // ❌
-    // const cropPath = path.join(process.cwd(), "frontend", "public", "crop.jpg");
+    if (!fs.existsSync(tempFolderPath)) {
+      fs.mkdirSync(tempFolderPath, { recursive: true });
+    }
 
-    console.log("✅ Se pudo recortar la imagen");
+    const fileName = path.basename(filePath, path.extname(filePath));
+    const topPath = path.join(tempFolderPath, `${fileName}_top.png`);
+    const bottomPath = path.join(tempFolderPath, `${fileName}_bottom.png`);
 
-    // if (!(topHalf instanceof Jimp) || !(bottomHalf instanceof Jimp)) {
-    //   throw new Error("El crop no devolvió una instancia válida de Jimp");
-    // }
-  } catch (err) {
-    console.error("❌ Error al recortar imagen:", err); // sin stringify
-    throw new Error("Error al recortar imagen: " + err.message);
+    try {
+      await topClone.write(topPath);
+      // await bottomHalf.write(bottomPath);
+      console.log("📝 Archivos top y bottom guardados exitosamente");
+    } catch (err) {
+      console.timeEnd("leer-codigo-qr-halved-imagen");
+      console.error(
+        "❌ Error al guardar las imágenes recortadas:",
+        err.message
+      );
+      throw new Error(
+        "Error al guardar las imágenes recortadas: " + err.message
+      );
+    }
+
+    console.log("🔍 Buscando QR en la mitad superior e inferior...");
+    try {
+      const text = await readQrCode(topPath);
+      console.log("✅ QR encontrado en la mitad superior");
+      console.timeEnd("leer-codigo-qr-halved-imagen");
+      return text;
+    } catch {}
+
+    console.log("🔍 Buscando QR en la mitad inferior...");
+    try {
+      const text = await readQrCode(bottomPath);
+      console.log("✅ QR encontrado en la mitad inferior");
+      console.timeEnd("leer-codigo-qr-halved-imagen");
+      return text;
+    } catch {}
   }
-
-  if (!fs.existsSync(tempFolderPath)) {
-    fs.mkdirSync(tempFolderPath, { recursive: true });
-  }
-
-  const fileName = path.basename(filePath, path.extname(filePath));
-  const topPath = path.join(tempFolderPath, `${fileName}_top.png`);
-  const bottomPath = path.join(tempFolderPath, `${fileName}_bottom.png`);
-
-  try {
-    await topClone.write(topPath);
-    // await bottomHalf.write(bottomPath);
-    console.log("📝 Archivos top y bottom guardados exitosamente");
-  } catch (err) {
-    console.error("❌ Error al guardar las imágenes recortadas:", err.message);
-    throw new Error("Error al guardar las imágenes recortadas: " + err.message);
-  }
-
-  try {
-    const text = await readQrCode(topPath);
-    console.log("✅ QR encontrado en la mitad superior");
-    return text;
-  } catch {}
-
-  try {
-    const text = await readQrCode(bottomPath);
-    console.log("✅ QR encontrado en la mitad inferior");
-    return text;
-  } catch {}
-
+  console.timeEnd("leer-codigo-qr-halved-imagen");
   return null;
 }
 

@@ -12,37 +12,40 @@ export default function EscanerPDF() {
   const [contrast, setContrast] = useState(100); // valor en porcentaje
 
   const ajustarImagen = async () => {
-  const response = await window.electron.adjustImage({
-    imagePath: `./${selectedPdf?.name.replace(/\.pdf$/i, "")}/${previewImage}`,
-    brightness,
-    contrast,
-  });
+    const response = await window.electron.adjustImage({
+      imagePath: `./${selectedPdf?.name.replace(
+        /\.pdf$/i,
+        ""
+      )}/${previewImage}`,
+      brightness,
+      contrast,
+    });
 
-  console.log("⚙️ Response completo:", response);
+    console.log("⚙️ Response completo:", response);
 
-  if (response.success) {
-    setPreviewImage(response.path); // actualiza la imagen con nombre nuevo
+    if (response.success) {
+      setPreviewImage(response.path); // actualiza la imagen con nombre nuevo
 
-    if (response.qrText) {
-      console.log("✅ Encontró un QR y lo modificó: ", response);
-      setPdfList((prevList) =>
-        prevList.map((pdf) => {
-          if (pdf.id === selectedPdfId) {
-            return {
-              ...pdf,
-              noQRCodes: pdf.noQRCodes.filter((img) => img !== previewImage),
-            };
-          }
-          return pdf;
-        })
-      );
+      if (response.qrText) {
+        console.log("✅ Encontró un QR y lo modificó: ", response);
+        setPdfList((prevList) =>
+          prevList.map((pdf) => {
+            if (pdf.id === selectedPdfId) {
+              return {
+                ...pdf,
+                noQRCodes: pdf.noQRCodes.filter((img) => img !== previewImage),
+              };
+            }
+            return pdf;
+          })
+        );
+      } else {
+        console.log("⚠️ No encontró QR en la imagen ajustada.");
+      }
     } else {
-      console.log("⚠️ No encontró QR en la imagen ajustada.");
+      console.log("❌ Error al modificar la imagen:", response.error);
     }
-  } else {
-    console.log("❌ Error al modificar la imagen:", response.error);
-  }
-};
+  };
 
   const handleFileUpload = async () => {
     const filePath = await window.electron.openFileDialog();
@@ -53,14 +56,61 @@ export default function EscanerPDF() {
       id: Date.now(),
       name: fileName,
       path: filePath,
-      status: "pending",
+      status: "processing-pdf-to-images", // Cambiado a 'processing-pdf-to-images'
       foundQRCodes: [],
       noQRCodes: [],
       allPages: [],
       doubleFace: false,
     };
 
-    setPdfList((prev) => [...prev, newPdf]);
+    let status = "pending"; // Cambiado a 'ready-to-scan'
+
+    let updatedPdf = { ...newPdf, status: "processing-pdf-to-images" };
+
+    // Si ya existe, lo reemplazamos
+    setPdfList((prev) => {
+      const exists = prev.some((pdf) => pdf.id === updatedPdf.id);
+      if (exists) {
+        return prev.map((pdf) => (pdf.id === updatedPdf.id ? updatedPdf : pdf));
+      } else {
+        return [...prev, updatedPdf];
+      }
+    });
+
+    try {
+      console.log("INICIALIZANDO PDF:", fileName);
+      const result = await window.electron.initPdf(fileName);
+      console.log("RESULTADO DE INICIALIZAR PDF:", result);
+
+      if (result.status === "success") {
+        status = "pending"; // Cambiado a 'pending'
+      } else {
+        status = "error";
+        alert("Error al INICIALIZAR el archivo: " + result.error);
+      }
+    } catch (error) {
+      status = "error";
+      alert("Error al INICIALIZAR el archivo: " + error.message);
+    }
+
+    // Actualizar el estado del PDF con el resultado real
+    updatedPdf = { ...newPdf, status };
+
+    // Si ya existe, lo reemplazamos
+    setPdfList((prev) => {
+      const exists = prev.some((pdf) => pdf.id === updatedPdf.id);
+      if (exists) {
+        return prev.map((pdf) => (pdf.id === updatedPdf.id ? updatedPdf : pdf));
+      } else {
+        return [...prev, updatedPdf];
+      }
+    });
+
+    // Desseleccionar si era el activo
+    if (selectedPdfId === newPdf.id) {
+      setSelectedPdfId(null);
+    }
+
     setSelectedPdfId(newPdf.id);
   };
 
@@ -290,6 +340,11 @@ export default function EscanerPDF() {
       alert(`Error al zipear PDF '${pdfToZip.name}': ${error.message}`);
     } finally {
       setZipping(false); // Desactiva el estado de zipping global
+      setPdfList((prev) =>
+        prev.map((pdf) =>
+          pdf.id === pdfToZip.id ? { ...pdf, status: "zipped" } : pdf
+        )
+      );
     }
   };
 
@@ -327,7 +382,7 @@ export default function EscanerPDF() {
           <div className="flex justify-between items-center mb-3">
             <h2 className="text-xl">Documentos</h2>
             <button
-              className="rounded-md p-2 border border-gray-300 hover:bg-gray-100 flex items-center gap-2"
+              className="rounded-md p-2 border border-gray-300 hover:bg-gray-100 flex items-center gap-2 hover:text-blue-600 hover:cursor-pointer"
               onClick={handleFileUpload}
             >
               <i className="fas fa-plus" /> Agregar
@@ -335,9 +390,9 @@ export default function EscanerPDF() {
           </div>
           {/* Nuevo botón para escanear todos los PDFs pendientes */}
           <button
-            className="rounded-md p-2 mt-2 border border-gray-300 bg-blue-600 text-white hover:bg-blue-700 flex items-center justify-center gap-2"
+            className="rounded-md p-2 mt-2 border border-gray-300 bg-blue-600 text-white hover:bg-blue-700 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={scanAllPendingPdfs}
-            disabled={scanning} // Deshabilita el botón mientras se está escaneando
+            disabled={scanning || zipping || pdfList.length === 0}
           >
             {scanning ? (
               <>
@@ -358,7 +413,7 @@ export default function EscanerPDF() {
               let statusIcon, statusColor;
               switch (pdf.status) {
                 case "pending":
-                  statusIcon = <i className="fa-regular fa-clock" />;
+                  statusIcon = <i className="fa-solid fa-file-image" />;
                   statusColor = "text-gray-500";
                   break;
                 case "scanning":
@@ -375,16 +430,26 @@ export default function EscanerPDF() {
                     statusColor = "text-yellow-500";
                   } else {
                     statusIcon = <i className="fa-solid fa-check-circle" />;
-                    statusColor = "text-green-500";
+                    statusColor = "text-blue-500";
                   }
                   break;
                 case "zipped":
                   statusIcon = <i className="fa-solid fa-file-zipper" />;
-                  statusColor = "text-blue-500";
+                  statusColor = "text-green-500";
                   break;
                 case "error": // Añadir caso para el estado de error
                   statusIcon = <i className="fa-solid fa-exclamation-circle" />;
                   statusColor = "text-red-500";
+                  break;
+                case "processing-pdf-to-images":
+                  statusIcon = <i className="fa-regular fa-clock" />;
+                  statusColor = "text-gray-600";
+                  break;
+                case "zipping":
+                  statusIcon = (
+                    <i className="fa-solid fa-spinner animate-spin" />
+                  );
+                  statusColor = "text-blue-500";
                   break;
                 default:
                   statusIcon = <i className="fa-solid fa-question-circle" />; // Icono por defecto si el estado no está claro
@@ -420,25 +485,30 @@ export default function EscanerPDF() {
 
         <div className="p-6 col-span-3 overflow-auto flex flex-col h-full border border-gray-200 rounded-lg">
           <div className="flex items-center gap-2 mb-4">
-            <h1 className="text-xl mb-4">
-              {selectedPdf
-                ? selectedPdf.name.replace(/\.pdf$/i, "")
-                : "Selecciona un documento"}
-            </h1>
-            {selectedPdf && (
-              <button
-                className="ml-2 text-gray-500 hover:text-red-500"
-                onClick={() => setSelectedPdfId(null)}
-              >
-                <i className="fa-solid fa-xmark" />
-              </button>
-            )}
+            <div className="flex items-center gap-2 px-4 py-2 rounded-t-2xl bg-white border border-b-0 border-gray-300">
+              <h1 className="text-xl font-semibold text-gray-800">
+                {selectedPdf
+                  ? selectedPdf.name.replace(/\.pdf$/i, "")
+                  : "Selecciona un documento"}
+              </h1>
+              {selectedPdf && (
+                <button
+                  className="ml-2 text-gray-500 hover:text-red-500 transition"
+                  onClick={() => setSelectedPdfId(null)}
+                >
+                  <i className="fa-solid fa-xmark text-lg" />
+                </button>
+              )}
+            </div>
+
             {selectedPdf && (
               <div className="flex items-center gap-2 ml-auto">
                 <label className="flex items-center gap-2 text-sm mr-4">
                   <input
+                    className="cursor-pointer disabled:cursor-not-allowed"
                     type="checkbox"
                     checked={selectedPdf.doubleFace}
+                    disabled={selectedPdf.status !== "pending"}
                     onChange={(e) => {
                       const newValue = e.target.checked;
                       setPdfList((prev) =>
@@ -453,18 +523,33 @@ export default function EscanerPDF() {
                   Doble cara
                 </label>
                 <button
-                  className="p-2 rounded-md border border-gray-300 bg-gray-900 text-white hover:bg-gray-700 flex items-center gap-2"
-                  disabled={!selectedPdf || scanning} // Deshabilita si hay un escaneo masivo
-                  onClick={() => scanPdf(selectedPdf)} // Pasa el PDF seleccionado a scanPdf
+                  className={`p-2 rounded-md border border-gray-300 bg-blue-500 text-white cursor-pointer hover:bg-blue-700 flex items-center gap-2 
+    ${
+      selectedPdf && selectedPdf.status === "pending" && !scanning
+        ? "animate-pulse"
+        : ""
+    } 
+    disabled:bg-gray-500 disabled:cursor-not-allowed`}
+                  disabled={
+                    !selectedPdf || scanning || selectedPdf.status !== "pending"
+                  }
+                  onClick={() => scanPdf(selectedPdf)}
                 >
                   <i className="fa-solid fa-expand" /> Escanear PDF
                 </button>
+
                 <button
-                  className="p-2 rounded-md border border-gray-300 bg-gray-900 text-white hover:bg-gray-700 flex items-center gap-2"
-                  disabled={!selectedPdf || scanning}
-                  onClick={() => {
-                    zipPdfSingle(selectedPdf);
-                  }}
+                  className={`p-2 rounded-md border border-gray-300 bg-green-500 text-white cursor-pointer hover:bg-green-700 flex items-center gap-2 
+    ${
+      selectedPdf && selectedPdf.status === "scanned" && !scanning
+        ? "animate-pulse"
+        : ""
+    } 
+    disabled:bg-gray-500 disabled:cursor-not-allowed`}
+                  disabled={
+                    !selectedPdf || scanning || selectedPdf.status !== "scanned"
+                  }
+                  onClick={() => zipPdfSingle(selectedPdf)}
                 >
                   <i className="fa-solid fa-file-zipper" /> Guardar en Zip
                 </button>
@@ -476,7 +561,7 @@ export default function EscanerPDF() {
             {["vista-previa", "estado-paginas"].map((tab) => (
               <button
                 key={tab}
-                className={`p-2 rounded-md w-full ${
+                className={`p-2 rounded-md w-full cursor-pointer ${
                   activeTab === tab
                     ? "bg-white text-gray-900"
                     : "bg-gray-200 text-gray-900"
@@ -502,7 +587,7 @@ export default function EscanerPDF() {
                 <i className="fa-regular fa-file-lines text-5xl mb-4 text-gray-500" />
                 <button
                   onClick={handleFileUpload}
-                  className="text-gray-900 p-2 rounded-lg border border-gray-300 hover:bg-gray-100"
+                  className="text-gray-900 p-2 rounded-lg border border-gray-300 hover:bg-gray-100 cursor-pointer flex items-center gap-2"
                 >
                   <i className="fa-solid fa-arrow-up-from-bracket" />{" "}
                   Seleccionar PDF
@@ -510,16 +595,27 @@ export default function EscanerPDF() {
               </div>
             )}
 
-            {selectedPdf && activeTab === "vista-previa" && (
-              <webview
-                src={`file://${selectedPdf.path}`}
-                style={{ width: "100%", height: "80vh", border: "none" }}
-              />
-            )}
+            {selectedPdf &&
+              activeTab === "vista-previa" &&
+              (selectedPdf.status === "processing-pdf-to-images" ? (
+                <div className="flex flex-col justify-center gap-4 items-center h-[80vh]">
+                  <p className="text-gray-500 text-xl">
+                    Procesando PDF a imágenes...
+                  </p>
+                  <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-blue-500 border-solid" />
+                </div>
+              ) : (
+                <webview
+                  src={`file://${selectedPdf.path}`}
+                  style={{ width: "100%", height: "80vh", border: "none" }}
+                />
+              ))}
 
             {selectedPdf && activeTab === "estado-paginas" && (
               <>
-                {selectedPdf.status === "scanned" ? (
+                {selectedPdf.status === "scanned" ||
+                selectedPdf.status === "zipped" ||
+                selectedPdf.status === "zipping" ? (
                   <>
                     <h2 className="text-lg font-semibold mb-4">
                       Imágenes sin QR
@@ -550,8 +646,18 @@ export default function EscanerPDF() {
                   <p className="text-sm text-gray-500">
                     El PDF aún no ha sido escaneado.
                   </p>
+                ) : selectedPdf.status === "processing-pdf-to-images" ? (
+                  <div className="flex flex-col justify-center gap-4 items-center h-[80vh]">
+                    <p className="text-gray-500 text-xl">
+                      Procesando PDF a imágenes...
+                    </p>
+                    <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-blue-500 border-solid" />
+                  </div>
                 ) : selectedPdf.status === "scanning" ? (
-                  <p className="text-sm text-gray-500">Escaneando...</p>
+                  <div className="flex flex-col justify-center gap-4 items-center h-[80vh]">
+                    <p className="text-gray-500 text-xl">Leyendo QRs...</p>
+                    <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-blue-500 border-solid" />
+                  </div>
                 ) : (
                   <p className="text-sm text-gray-500">
                     El PDF no ha sido escaneado correctamente o hubo un error.
