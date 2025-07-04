@@ -17,7 +17,8 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const outputDirectory = path.join(process.cwd(), "frontend", "public");
+const appPath = app.getAppPath();
+const outputDirectory = path.join(appPath, "frontend", "public");
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -25,14 +26,20 @@ function createWindow() {
     height: 768,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
-      nodeIntegration: true,
+      nodeIntegration: false,
       contextIsolation: true,
       webviewTag: true,
     },
   });
 
   win.setMenuBarVisibility(true);
-  win.loadURL("http://localhost:5173");
+  // win.loadURL("http://localhost:5173"); // Desarrollo
+  // win.loadURL(`file://${path.join(__dirname, "../dist/index.html")}`); // Producción
+  if (app.isPackaged) {
+    win.loadFile(path.join(__dirname, "../frontend/dist/index.html"));
+  } else {
+    win.loadURL("http://localhost:5173");
+  }
 }
 
 ipcMain.handle("dialog:openFile", async () => {
@@ -204,14 +211,6 @@ ipcMain.handle("zip-folder", (event, pdfName, pdfId) => {
   return new Promise((resolve, reject) => {
     const fileToZip = path.join(process.cwd(), "frontend", "public", pdfName);
 
-    const outputDirectory = path.join(
-      process.cwd(),
-      "frontend",
-      "public",
-      "zipped_pdfs",
-      pdfName
-    );
-
     const outputZipDir = path.join(app.getAppPath(), "zipped_pdfs");
     const outputZipPath = path.join(outputZipDir, `${pdfName}.zip`);
 
@@ -321,7 +320,7 @@ ipcMain.handle(
       image.brightness(brightnessValue); // -1 a 1
       image.contrast(contrastValue); // -1 a 1
 
-      // const outputPath = inputPath.replace(/\.png$/, "_adjusted.png");
+      const outputPath = inputPath.replace(/\.png$/, "_adjusted.png");
       // await image.write(outputPath);
 
       const width = image.bitmap.width;

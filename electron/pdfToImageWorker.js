@@ -3,6 +3,7 @@ import fs from "fs";
 import { parentPort } from "worker_threads";
 import pdf from "pdf-poppler";
 
+// const outputDirectory = path.join(process.cwd(), "frontend", "public");
 const outputDirectory = path.join(process.cwd(), "frontend", "public");
 
 async function clearFolder(folderPath) {
@@ -26,7 +27,7 @@ async function convertPdfToImages(pdfPath) {
   console.time("convertir-pdf-a-imagenes");
   const pdfFileName = path.basename(pdfPath, path.extname(pdfPath));
   const outputFolder = path.join(outputDirectory, pdfFileName);
-  
+
   if (!fs.existsSync(outputFolder)) {
     fs.mkdirSync(outputFolder, { recursive: true });
   }
@@ -43,7 +44,9 @@ async function convertPdfToImages(pdfPath) {
 }
 
 parentPort.on("message", async ({ pdfName, doubleFace, savedPdfsPath }) => {
-  console.time(`⏱️ Tiempo total de ejecución para SOLO PASAR EL PDF A IMAGEN ${pdfName}`);
+  console.time(
+    `⏱️ Tiempo total de ejecución para SOLO PASAR EL PDF A IMAGEN ${pdfName}`
+  );
   const pdfPath = path.join(savedPdfsPath, pdfName);
   const nameWithoutExt = path.basename(pdfName, path.extname(pdfName));
 
@@ -55,7 +58,9 @@ parentPort.on("message", async ({ pdfName, doubleFace, savedPdfsPath }) => {
     await clearFolder(path.join(outputDirectory, nameWithoutExt));
     await convertPdfToImages(pdfPath);
 
-    console.timeEnd(`⏱️ Tiempo total de ejecución para SOLO PASAR EL PDF A IMAGEN ${pdfName}`);
+    console.timeEnd(
+      `⏱️ Tiempo total de ejecución para SOLO PASAR EL PDF A IMAGEN ${pdfName}`
+    );
     parentPort.postMessage({ status: "success", pdfName });
   } catch (err) {
     console.error(`❌ Error escaneando ${pdfName}:`, err.message);

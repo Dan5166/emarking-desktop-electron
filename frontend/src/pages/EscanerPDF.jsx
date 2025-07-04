@@ -334,7 +334,7 @@ export default function EscanerPDF() {
     const folderName = pdfToZip.name.replace(/\.pdf$/i, "");
     try {
       await window.electron.zipFolder(folderName, pdfToZip.id); // Llama al worker
-      alert(`PDF '${pdfToZip.name}' guardado en ZIP exitosamente.`);
+      // alert(`PDF '${pdfToZip.name}' guardado en ZIP exitosamente.`);
     } catch (error) {
       console.error(`Error al zipear el PDF ${pdfToZip.name}:`, error.message);
       alert(`Error al zipear PDF '${pdfToZip.name}': ${error.message}`);
